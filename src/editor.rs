@@ -1,4 +1,4 @@
-use crossterm::event::{ read, Event::{ self, Key }, KeyEventKind, KeyCode, KeyEvent, KeyModifiers };
+use crossterm::event::{ read, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers };
 use std::io::Error;
 use std::cmp::min;
 
@@ -36,7 +36,7 @@ impl Editor {
                 break;
             }
             let event = read()?;
-            self.evaluate_event(&event)?;
+            self.evaluate_event(event)?;
         }
         Ok(())
     }
@@ -75,29 +75,50 @@ impl Editor {
         Ok(())
     }
 
-    fn evaluate_event(&mut self, event: &Event) -> Result<(), Error> {
-        if let Key(KeyEvent { code, modifiers, kind: KeyEventKind::Press, .. }) = event {
-            match code {
-                KeyCode::Char('q') if *modifiers == KeyModifiers::CONTROL => {
-                    self.should_quit = true;
+    // needless_pass_by_value: Event is not huge, so there is not a
+    // performance overhead in passing by value, and pattern matching in this
+    // function would be needlessly complicated if we pass by reference here.
+    #[allow(clippy::needless_pass_by_value)]
+    fn evaluate_event(&mut self, event: Event) -> Result<(), Error> {
+        match event {
+            Event::Key(KeyEvent { code, kind: KeyEventKind::Press, modifiers, .. }) =>
+                match (code, modifiers) {
+                    (KeyCode::Char('q'), KeyModifiers::CONTROL) => {
+                        self.should_quit = true;
+                    }
+                    (
+                        | KeyCode::Up
+                        | KeyCode::Down
+                        | KeyCode::Left
+                        | KeyCode::Right
+                        | KeyCode::PageDown
+                        | KeyCode::PageUp
+                        | KeyCode::End
+                        | KeyCode::Home,
+                        _,
+                    ) => {
+                        self.move_point(code)?;
+                    }
+                    _ => {}
                 }
-                | KeyCode::Up
-                | KeyCode::Down
-                | KeyCode::Left
-                | KeyCode::Right
-                | KeyCode::Home
-                | KeyCode::End
-                | KeyCode::PageUp
-                | KeyCode::PageDown => {
-                    self.move_point(*code)?;
-                }
-                _ => (),
+            Event::Resize(width_u16, height_u16) => {
+                // clippy::as_conversions: Will run into problems for rare edge case systems where usize < u16
+                #[allow(clippy::as_conversions)]
+                let height = height_u16 as usize;
+                // clippy::as_conversions: Will run into problems for rare edge case systems where usize < u16
+                #[allow(clippy::as_conversions)]
+                let width = width_u16 as usize;
+                self.view.resize(Size {
+                    height,
+                    width,
+                });
             }
+            _ => {}
         }
         Ok(())
     }
 
-    fn refresh_screen(&self) -> Result<(), Error> {
+    fn refresh_screen(&mut self) -> Result<(), Error> {
         Terminal::hide_caret()?;
         Terminal::move_caret_to(Position::default())?;
         if self.should_quit {
